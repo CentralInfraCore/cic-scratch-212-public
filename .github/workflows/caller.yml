@@ -6,3 +6,4 @@ permissions:
 jobs:
   reusable-call:
     uses: CentralInfraCore/cic-scratch-212-workflows/.github/workflows/check.yml@permissive
+# rerun
