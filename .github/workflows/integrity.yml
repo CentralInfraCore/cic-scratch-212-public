@@ -17,4 +17,4 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           BASE_SHA: ${{ github.sha }}
-        run: python3 scripts/integrity.py
+        run: echo "FROZEN-BASE-VARIANT-OF-INTEGRITY-WORKFLOW" && python3 scripts/integrity.py
