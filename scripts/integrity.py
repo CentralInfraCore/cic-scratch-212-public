@@ -13,9 +13,9 @@ import sys
 
 import yaml
 
-REPO = os.environ["REPO"]
-PR = os.environ["PR_NUMBER"]
-HEAD = os.environ["HEAD_SHA"]
+REPO = os.environ.get("REPO", "")
+PR = os.environ.get("PR_NUMBER", "")
+HEAD = os.environ.get("HEAD_SHA", "")
 BASE = os.environ.get("BASE_SHA", "")
 APPROVAL = re.compile(r"^APPROVE-PROTECTED head=([0-9a-f]{40}) digest=sha256:([0-9a-f]{64})[ \t\r]*$", re.M)
 
@@ -34,14 +34,30 @@ def deny(msg):
     sys.exit(1)
 
 
+def protected_changes(files, protected):
+    """Return the sorted change records that touch a protected path.
+
+    A file counts as touching the protected set when EITHER its new name (filename) OR its old
+    name (previous_filename, present for renames/copies) is protected. Both names go into the
+    record, so the approval digest binds the full move, not only the destination.
+    """
+    out = []
+    for f in files:
+        names = [f["filename"]]
+        if f.get("previous_filename"):
+            names.append(f["previous_filename"])
+        if any(n.startswith(p) for n in names for p in protected):
+            out.append(f"{f['status']} {f.get('previous_filename') or '-'} -> {f['filename']} {f.get('sha')}")
+    return sorted(out)
+
+
 def main():
     policy_text = open("policy.json", encoding="utf-8").read()
     policy = json.loads(policy_text)
     pdigest = hashlib.sha256(policy_text.encode()).hexdigest()
     print(f"base={BASE} head={HEAD} policy-digest=sha256:{pdigest}")
     files = api(f"repos/{REPO}/pulls/{PR}/files")
-    changed = sorted(f"{f['status']} {f['filename']} {f.get('sha')}" for f in files
-                     if any(f["filename"].startswith(p) for p in policy["protected"]))
+    changed = protected_changes(files, policy["protected"])
     if not changed:
         print("UNCHANGED: no protected path touched")
         return
@@ -73,4 +89,5 @@ def main():
     print("APPROVED_UPDATE: approval valid and head ci.yml conforms")
 
 
-main()
+if __name__ == "__main__":
+    main()
