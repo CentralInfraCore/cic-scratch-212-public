@@ -12,3 +12,5 @@ jobs:
       - uses: actions/checkout@v4
       - name: real check
         run: bash scripts/check.sh
+      - name: note
+        run: echo "A4 conforming change"
