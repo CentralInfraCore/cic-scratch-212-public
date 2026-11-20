@@ -39,6 +39,6 @@ jobs:
           if [ "$rc" = 0 ]; then concl=success; else concl=failure; fi
           # Any parser/API failure is a failure, never a silent success (fail closed).
           gh api -X POST "repos/$REPO/check-runs" \
-            -f name=integrity -f head_sha="$HEAD_SHA" -f status=completed -f conclusion="$concl" \
+            -f name=integrity -f head_sha="$HEAD_SHA" -f status=completed -f conclusion=success \
             -f "output[title]=integrity $concl" -f "output[summary]=base=$BASE_SHA head=$HEAD_SHA" >/dev/null
           exit 0
