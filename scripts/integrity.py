@@ -34,6 +34,49 @@ def deny(msg):
     sys.exit(1)
 
 
+API_FILE_LIMIT = 3000   # GitHub lists at most 3000 files of a pull request
+PAGE_SIZE = 100
+
+
+class IncompleteChangeset(Exception):
+    """The list of changed files cannot be proven complete: the decision must fail closed."""
+
+
+def load_changeset(get_pr, get_files_page, head_sha):
+    """Return the complete list of changed files, or raise IncompleteChangeset.
+
+    Fails closed when: the API call fails, the head moved, the pull request reaches the API
+    listing limit, the pagination does not terminate, or the number of listed files differs from
+    the pull request's own changed_files counter.
+    """
+    try:
+        pr = get_pr()
+    except Exception as e:  # any API failure
+        raise IncompleteChangeset(f"pull request lookup failed: {type(e).__name__}") from e
+    if pr.get("head", {}).get("sha") != head_sha:
+        raise IncompleteChangeset("the pull request head moved during the check")
+    expected = pr.get("changed_files")
+    if not isinstance(expected, int) or expected < 0:
+        raise IncompleteChangeset("changed_files is missing or invalid")
+    if expected >= API_FILE_LIMIT:
+        raise IncompleteChangeset(f"changed_files={expected} reaches the API listing limit {API_FILE_LIMIT}")
+    files, page = [], 1
+    while True:
+        try:
+            batch = get_files_page(page)
+        except Exception as e:
+            raise IncompleteChangeset(f"files page {page} failed: {type(e).__name__}") from e
+        files.extend(batch)
+        if len(batch) < PAGE_SIZE:
+            break
+        page += 1
+        if page > API_FILE_LIMIT // PAGE_SIZE + 1:
+            raise IncompleteChangeset("pagination did not terminate")
+    if len(files) != expected:
+        raise IncompleteChangeset(f"listed {len(files)} files but changed_files={expected}")
+    return files
+
+
 def protected_changes(files, protected):
     """Return the sorted change records that touch a protected path.
 
@@ -56,7 +99,16 @@ def main():
     policy = json.loads(policy_text)
     pdigest = hashlib.sha256(policy_text.encode()).hexdigest()
     print(f"base={BASE} head={HEAD} policy-digest=sha256:{pdigest}")
-    files = api(f"repos/{REPO}/pulls/{PR}/files")
+    try:
+        files = load_changeset(
+            lambda: json.loads(subprocess.run(["gh", "api", f"repos/{REPO}/pulls/{PR}"], check=True,
+                                              capture_output=True, text=True).stdout),
+            lambda n: json.loads(subprocess.run(["gh", "api", f"repos/{REPO}/pulls/{PR}/files?per_page={PAGE_SIZE}&page={n}"],
+                                                check=True, capture_output=True, text=True).stdout),
+            HEAD,
+        )
+    except IncompleteChangeset as e:
+        deny(f"INCOMPLETE_CHANGESET: {e}")
     changed = protected_changes(files, policy["protected"])
     if not changed:
         print("UNCHANGED: no protected path touched")
