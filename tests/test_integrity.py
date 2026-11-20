@@ -48,3 +48,74 @@ class ProtectedChanges(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LoadChangeset(unittest.TestCase):
+    """Completeness of the changed-file list (P0: truncated input must never produce SUCCESS)."""
+
+    HEAD = "a" * 40
+
+    @staticmethod
+    def make(n_expected, n_listed, head=None, fail_on_page=None, pr_fails=False):
+        head = head or LoadChangeset.HEAD
+        listed = [{"status": "added", "filename": f"notes/f{i:05d}", "sha": "s"} for i in range(n_listed)]
+
+        def get_pr():
+            if pr_fails:
+                raise RuntimeError("api down")
+            return {"head": {"sha": head}, "changed_files": n_expected}
+
+        def get_page(n):
+            if fail_on_page == n:
+                raise RuntimeError("page failed")
+            return listed[(n - 1) * 100:n * 100]
+
+        return get_pr, get_page
+
+    def ok(self, n):
+        files = integrity.load_changeset(*self.make(n, n), self.HEAD)
+        self.assertEqual(len(files), n)
+
+    def bad(self, *a, **k):
+        with self.assertRaises(integrity.IncompleteChangeset):
+            integrity.load_changeset(*self.make(*a, **k), self.HEAD)
+
+    def test_2999_complete_is_accepted(self):
+        self.ok(2999)
+
+    def test_normal_small_is_accepted(self):
+        self.ok(3)
+
+    def test_empty_is_accepted(self):
+        self.ok(0)
+
+    def test_100_exact_page_boundary_is_accepted(self):
+        self.ok(100)
+
+    def test_3000_reaches_api_limit(self):
+        self.bad(3000, 3000)
+
+    def test_3001_denied(self):
+        self.bad(3001, 3000)
+
+    def test_3002_with_truncated_list_denied(self):
+        self.bad(3002, 3000)
+
+    def test_count_mismatch_denied(self):
+        self.bad(5, 4)
+
+    def test_more_listed_than_counted_denied(self):
+        self.bad(4, 5)
+
+    def test_paging_error_denied(self):
+        self.bad(250, 250, fail_on_page=2)
+
+    def test_pr_lookup_error_denied(self):
+        self.bad(3, 3, pr_fails=True)
+
+    def test_head_moved_denied(self):
+        self.bad(3, 3, head="b" * 40)
+
+    def test_missing_counter_denied(self):
+        with self.assertRaises(integrity.IncompleteChangeset):
+            integrity.load_changeset(lambda: {"head": {"sha": self.HEAD}}, lambda n: [], self.HEAD)
